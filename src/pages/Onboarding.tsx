@@ -6,8 +6,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
 import { useAppState } from '@/state/AppStateContext';
 import { mockMatches, mockParsedSkills, generateId } from '@/mock/data';
+import { parseResume, ParsedResume } from '@/ai/resumeParser';
 import { 
   ArrowLeft, 
   ArrowRight, 
@@ -16,8 +18,11 @@ import {
   FileText, 
   CheckCircle2,
   Loader2,
-  X
+  X,
+  Brain,
+  Sparkles
 } from 'lucide-react';
+import { toast } from 'sonner';
 
 const steps = [
   { id: 1, title: 'Personal Info', icon: FileText },
@@ -32,6 +37,8 @@ export default function Onboarding() {
   const [currentStep, setCurrentStep] = useState(1);
   const [isParsing, setIsParsing] = useState(false);
   const [resumeFile, setResumeFile] = useState<File | null>(null);
+  const [resumeText, setResumeText] = useState<string>('');
+  const [parsedResume, setParsedResume] = useState<ParsedResume | null>(null);
   const [consentParsing, setConsentParsing] = useState(false);
   
   const [formData, setFormData] = useState({
@@ -43,6 +50,9 @@ export default function Onboarding() {
     homeAddress: '',
     workAddress: '',
     skills: [] as string[],
+    tools: [] as string[],
+    yearsExperience: 0,
+    certifications: [] as string[],
   });
 
   const progress = (currentStep / steps.length) * 100;
@@ -56,18 +66,60 @@ export default function Onboarding() {
     const file = e.target.files?.[0];
     if (file) {
       setResumeFile(file);
-      if (consentParsing) {
-        await parseResume();
-      }
+      // Read file as text
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const text = event.target?.result as string;
+        setResumeText(text);
+        if (consentParsing) {
+          await parseResumeFile(text);
+        }
+      };
+      reader.readAsText(file);
     }
   };
 
-  const parseResume = async () => {
+  const parseResumeFile = async (text: string) => {
     setIsParsing(true);
-    // Simulate AI parsing delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    setFormData(prev => ({ ...prev, skills: mockParsedSkills }));
-    setIsParsing(false);
+    toast.info('AI analyzing resume...', { duration: 3000 });
+    
+    try {
+      const parsed = await parseResume(text);
+      setParsedResume(parsed);
+      
+      // Update form data with parsed information
+      setFormData(prev => ({
+        ...prev,
+        jobTitle: parsed.job_title || prev.jobTitle,
+        skills: parsed.skills.length > 0 ? parsed.skills : prev.skills,
+        tools: parsed.tools || [],
+        yearsExperience: parsed.years_experience || 0,
+        certifications: parsed.certifications || [],
+      }));
+      
+      toast.success('Resume parsed successfully! Review and edit the extracted information.', { duration: 5000 });
+    } catch (error) {
+      console.error('Error parsing resume:', error);
+      toast.error('Failed to parse resume. Please enter information manually.');
+      // Fallback to mock skills
+      setFormData(prev => ({ ...prev, skills: mockParsedSkills }));
+    } finally {
+      setIsParsing(false);
+    }
+  };
+
+  const handleParseClick = async () => {
+    if (resumeText) {
+      await parseResumeFile(resumeText);
+    } else if (resumeFile) {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const text = event.target?.result as string;
+        setResumeText(text);
+        await parseResumeFile(text);
+      };
+      reader.readAsText(resumeFile);
+    }
   };
 
   const handleSkillRemove = (skillToRemove: string) => {
@@ -109,7 +161,7 @@ export default function Onboarding() {
         lat: 37.7749,
         lng: -122.4194
       },
-      skills: formData.skills,
+      skills: formData.skills.length > 0 ? formData.skills : mockParsedSkills,
       profileComplete: true,
       avatarUrl: `https://api.dicebear.com/7.x/avataaars/svg?seed=${formData.name.replace(' ', '')}`
     };
@@ -126,7 +178,7 @@ export default function Onboarding() {
       case 2:
         return formData.homeAddress && formData.workAddress;
       case 3:
-        return resumeFile && consentParsing;
+        return resumeFile && (consentParsing ? parsedResume !== null : true);
       case 4:
         return true;
       default:
@@ -350,13 +402,11 @@ export default function Onboarding() {
                     checked={consentParsing}
                     onCheckedChange={(checked) => {
                       setConsentParsing(checked as boolean);
-                      if (checked && resumeFile) {
-                        parseResume();
-                      }
                     }}
                   />
-                  <div className="space-y-1">
-                    <Label htmlFor="consent" className="cursor-pointer font-medium">
+                  <div className="space-y-1 flex-1">
+                    <Label htmlFor="consent" className="cursor-pointer font-medium flex items-center gap-2">
+                      <Brain className="h-4 w-4 text-primary" />
                       I consent to AI resume parsing
                     </Label>
                     <p className="text-xs text-muted-foreground">
@@ -366,32 +416,106 @@ export default function Onboarding() {
                   </div>
                 </div>
 
+                {resumeFile && consentParsing && !parsedResume && !isParsing && (
+                  <Button 
+                    onClick={handleParseClick}
+                    className="w-full"
+                    variant="default"
+                  >
+                    <Sparkles className="h-4 w-4 mr-2" />
+                    Parse Resume with AI
+                  </Button>
+                )}
+
                 {isParsing && (
-                  <div className="flex items-center justify-center gap-3 p-4 bg-primary/5 rounded-xl">
+                  <div className="flex items-center justify-center gap-3 p-4 bg-primary/5 rounded-xl border border-primary/20">
                     <Loader2 className="h-5 w-5 text-primary animate-spin" />
-                    <span className="text-sm font-medium text-primary">Parsing resume...</span>
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium text-primary">AI analyzing resume...</span>
+                      <span className="text-xs text-muted-foreground">Extracting skills, experience, and certifications</span>
+                    </div>
                   </div>
                 )}
 
-                {formData.skills.length > 0 && !isParsing && (
-                  <div className="space-y-3">
-                    <Label>Extracted Skills (editable)</Label>
-                    <div className="flex flex-wrap gap-2">
-                      {formData.skills.map((skill, index) => (
-                        <span 
-                          key={index}
-                          className="inline-flex items-center gap-1 px-3 py-1 bg-primary/10 text-primary rounded-full text-sm"
-                        >
-                          {skill}
-                          <button 
-                            onClick={() => handleSkillRemove(skill)}
-                            className="hover:bg-primary/20 rounded-full p-0.5"
-                          >
-                            <X className="h-3 w-3" />
-                          </button>
-                        </span>
-                      ))}
+                {parsedResume && !isParsing && (
+                  <div className="space-y-4 p-4 bg-success/5 rounded-xl border border-success/20">
+                    <div className="flex items-center gap-2 text-success">
+                      <CheckCircle2 className="h-5 w-5" />
+                      <span className="font-medium">Resume parsed successfully!</span>
                     </div>
+                    
+                    {/* Job Title */}
+                    <div className="space-y-2">
+                      <Label>Job Title</Label>
+                      <Input 
+                        value={formData.jobTitle}
+                        onChange={(e) => setFormData(prev => ({ ...prev, jobTitle: e.target.value }))}
+                        placeholder="Edit job title"
+                      />
+                    </div>
+
+                    {/* Skills */}
+                    {formData.skills.length > 0 && (
+                      <div className="space-y-2">
+                        <Label className="flex items-center gap-2">
+                          Extracted Skills
+                          <Badge variant="secondary" className="text-xs">Editable</Badge>
+                        </Label>
+                        <div className="flex flex-wrap gap-2">
+                          {formData.skills.map((skill, index) => (
+                            <Badge 
+                              key={index}
+                              variant="secondary"
+                              className="inline-flex items-center gap-1 px-3 py-1"
+                            >
+                              {skill}
+                              <button 
+                                onClick={() => handleSkillRemove(skill)}
+                                className="hover:bg-destructive/20 rounded-full p-0.5"
+                              >
+                                <X className="h-3 w-3" />
+                              </button>
+                            </Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Tools */}
+                    {formData.tools.length > 0 && (
+                      <div className="space-y-2">
+                        <Label>Tools & Technologies</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {formData.tools.map((tool, index) => (
+                            <Badge key={index} variant="outline">{tool}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Years of Experience */}
+                    {formData.yearsExperience > 0 && (
+                      <div className="space-y-2">
+                        <Label>Years of Experience</Label>
+                        <Input 
+                          type="number"
+                          value={formData.yearsExperience}
+                          onChange={(e) => setFormData(prev => ({ ...prev, yearsExperience: parseInt(e.target.value) || 0 }))}
+                        />
+                      </div>
+                    )}
+
+                    {/* Certifications */}
+                    {formData.certifications.length > 0 && (
+                      <div className="space-y-2">
+                        <Label>Certifications</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {formData.certifications.map((cert, index) => (
+                            <Badge key={index} variant="outline">{cert}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </>

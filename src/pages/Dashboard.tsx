@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -6,9 +6,13 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Checkbox } from '@/components/ui/checkbox';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Badge } from '@/components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAppState } from '@/state/AppStateContext';
 import { CountUpNumber } from '@/hooks/useCountUp';
 import { Match, calculateCommuteSavings } from '@/mock/data';
+import { getAIRecommendations, AIRecommendation } from '@/ai/recommendationEngine';
+import { calculateCommuteImpact } from '@/ai/commuteImpact';
 import { 
   ArrowRight, 
   Clock, 
@@ -25,7 +29,10 @@ import {
   LogOut,
   Inbox,
   Building2,
-  TrendingUp
+  TrendingUp,
+  Sparkles,
+  Brain,
+  Info
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -38,8 +45,39 @@ export default function Dashboard() {
   const [requestMessage, setRequestMessage] = useState('');
   const [shareResume, setShareResume] = useState(true);
   const [shareContact, setShareContact] = useState(true);
+  const [aiRecommendations, setAiRecommendations] = useState<AIRecommendation[]>([]);
+  const [isLoadingAI, setIsLoadingAI] = useState(false);
 
   const { currentUser, matches, swapRequestsOutgoing, swapRequestsIncoming } = state;
+
+  // Load AI recommendations when matches change
+  useEffect(() => {
+    if (currentUser && matches.length > 0) {
+      setIsLoadingAI(true);
+      getAIRecommendations(
+        currentUser.skills,
+        currentUser.jobTitle,
+        matches
+      ).then(recommendations => {
+        setAiRecommendations(recommendations);
+        setIsLoadingAI(false);
+      }).catch(error => {
+        console.error('Error loading AI recommendations:', error);
+        setIsLoadingAI(false);
+      });
+    }
+  }, [currentUser, matches]);
+
+  // Helper to check if match is AI recommended
+  const isAIRecommended = (matchId: string): boolean => {
+    return aiRecommendations.some(rec => rec.match.id === matchId && rec.isRecommended);
+  };
+
+  // Helper to get AI reasoning for a match
+  const getAIReasoning = (matchId: string): string => {
+    const rec = aiRecommendations.find(r => r.match.id === matchId);
+    return rec?.reasoning || '';
+  };
 
   if (!currentUser) {
     navigate('/login');
@@ -247,18 +285,48 @@ export default function Dashboard() {
                           alt={match.name}
                           className="h-12 w-12 rounded-full bg-secondary"
                         />
-                        <div>
-                          <h3 className="font-semibold text-foreground">{match.name}</h3>
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-semibold text-foreground">{match.name}</h3>
+                            {isAIRecommended(match.id) && (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger>
+                                    <Badge variant="default" className="bg-gradient-to-r from-primary to-purple-600 text-white border-0">
+                                      <Sparkles className="h-3 w-3 mr-1" />
+                                      AI Recommended
+                                    </Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    <p className="font-medium mb-1">AI Recommendation</p>
+                                    <p className="text-xs">{getAIReasoning(match.id) || 'Top match based on compatibility analysis'}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            )}
+                          </div>
                           <p className="text-sm text-muted-foreground">{match.company}</p>
                         </div>
                       </div>
                       <div className="text-right">
-                        <div className={`text-2xl font-bold ${
-                          match.compatibilityScore >= 90 ? 'text-success' : 
-                          match.compatibilityScore >= 80 ? 'text-primary' : 'text-warning'
-                        }`}>
-                          {match.compatibilityScore}%
-                        </div>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger>
+                              <div className={`text-2xl font-bold ${
+                                match.compatibilityScore >= 90 ? 'text-success' : 
+                                match.compatibilityScore >= 80 ? 'text-primary' : 'text-warning'
+                              }`}>
+                                {match.compatibilityScore}%
+                              </div>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p className="text-xs">Compatibility Score</p>
+                              <p className="text-xs text-muted-foreground mt-1">
+                                Based on skills, role, commute, and salary match
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                         <p className="text-xs text-muted-foreground">match</p>
                       </div>
                     </div>
@@ -286,13 +354,13 @@ export default function Dashboard() {
                       )}
                     </div>
 
-                    {/* Commute Comparison */}
+                    {/* Commute Comparison with AI Impact */}
                     <div className="bg-secondary/50 rounded-lg p-3 mb-4">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-sm text-muted-foreground">Commute</span>
                         <TrendingUp className="h-4 w-4 text-success" />
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 mb-2">
                         <span className="text-lg font-semibold text-destructive line-through">
                           {match.commuteBeforeMinutes}m
                         </span>
@@ -304,6 +372,27 @@ export default function Dashboard() {
                           -{match.commuteBeforeMinutes - match.commuteAfterMinutes}m/day
                         </span>
                       </div>
+                      {(() => {
+                        const impact = calculateCommuteImpact(
+                          match.commuteBeforeMinutes,
+                          match.commuteAfterMinutes
+                        );
+                        return (
+                          <div className="pt-2 border-t border-border/50">
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <Brain className="h-3 w-3" />
+                              <span>AI Impact:</span>
+                              <span className="text-success font-medium">
+                                {impact.monthlyHoursSaved}h/month saved
+                              </span>
+                              <span className="text-muted-foreground">•</span>
+                              <span className="text-success font-medium">
+                                {impact.co2SavedEstimate}kg CO₂
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
 
                     {/* Salary Compatibility Badge */}

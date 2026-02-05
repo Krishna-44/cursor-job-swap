@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { 
   Table,
   TableBody,
@@ -19,9 +20,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useAppState } from '@/state/AppStateContext';
 import { CountUpNumber } from '@/hooks/useCountUp';
 import { HRRequest } from '@/mock/data';
+import { analyzeHRRequest, HRAIAnalysis } from '@/ai/hrAssist';
 import { 
   ArrowLeft, 
   Building2,
@@ -34,7 +37,10 @@ import {
   FileText,
   Users,
   TrendingUp,
-  Filter
+  Filter,
+  Brain,
+  AlertCircle,
+  Sparkles
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -46,6 +52,32 @@ export default function HRPortal() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedRequest, setSelectedRequest] = useState<HRRequest | null>(null);
+  const [aiAnalyses, setAiAnalyses] = useState<Map<string, HRAIAnalysis>>(new Map());
+  const [isLoadingAI, setIsLoadingAI] = useState(false);
+
+  // Load AI analyses for all requests
+  useEffect(() => {
+    if (hrRequests.length > 0) {
+      setIsLoadingAI(true);
+      Promise.all(
+        hrRequests.map(async (request) => {
+          const analysis = await analyzeHRRequest(request);
+          return [request.id, analysis] as [string, HRAIAnalysis];
+        })
+      ).then(results => {
+        const newMap = new Map(results);
+        setAiAnalyses(newMap);
+        setIsLoadingAI(false);
+      }).catch(error => {
+        console.error('Error loading AI analyses:', error);
+        setIsLoadingAI(false);
+      });
+    }
+  }, [hrRequests]);
+
+  const getAIAnalysis = (requestId: string): HRAIAnalysis | undefined => {
+    return aiAnalyses.get(requestId);
+  };
 
   // Filter requests
   const filteredRequests = hrRequests.filter(req => {
@@ -311,7 +343,60 @@ export default function HRPortal() {
                         </span>
                       </TableCell>
                       <TableCell className="text-center">
-                        {getStatusBadge(request.status)}
+                        <div className="flex flex-col items-center gap-1">
+                          {getStatusBadge(request.status)}
+                          {(() => {
+                            const aiAnalysis = getAIAnalysis(request.id);
+                            if (aiAnalysis && (request.status === 'peer_accepted' || request.status === 'hr_review')) {
+                              const badgeColors = {
+                                approve: 'bg-success/10 text-success border-success/20',
+                                review: 'bg-warning/10 text-warning border-warning/20',
+                                reject: 'bg-destructive/10 text-destructive border-destructive/20',
+                              };
+                              return (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger>
+                                      <Badge 
+                                        variant="outline" 
+                                        className={`text-xs ${badgeColors[aiAnalysis.recommendation]}`}
+                                      >
+                                        <Brain className="h-3 w-3 mr-1" />
+                                        AI: {aiAnalysis.recommendation.charAt(0).toUpperCase() + aiAnalysis.recommendation.slice(1)}
+                                      </Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-xs">
+                                      <p className="font-medium mb-1">AI Recommendation</p>
+                                      <p className="text-xs mb-2">{aiAnalysis.reasoning}</p>
+                                      <div className="text-xs space-y-1">
+                                        {aiAnalysis.benefits.length > 0 && (
+                                          <div>
+                                            <p className="font-medium text-success">Benefits:</p>
+                                            <ul className="list-disc list-inside">
+                                              {aiAnalysis.benefits.map((b, i) => <li key={i}>{b}</li>)}
+                                            </ul>
+                                          </div>
+                                        )}
+                                        {aiAnalysis.riskFactors.length > 0 && (
+                                          <div className="mt-2">
+                                            <p className="font-medium text-destructive">Risks:</p>
+                                            <ul className="list-disc list-inside">
+                                              {aiAnalysis.riskFactors.map((r, i) => <li key={i}>{r}</li>)}
+                                            </ul>
+                                          </div>
+                                        )}
+                                        <p className="mt-2 text-muted-foreground">
+                                          Confidence: {aiAnalysis.confidence}%
+                                        </p>
+                                      </div>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              );
+                            }
+                            return null;
+                          })()}
+                        </div>
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-2">
