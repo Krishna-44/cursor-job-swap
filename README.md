@@ -55,7 +55,7 @@ src/
 
 ### Prerequisites
 
-- Node.js (v18 or higher)
+- Node.js (v22 or higher)
 - npm or yarn
 - (Optional) OpenAI API key for AI features
 - (Optional) Supabase account for database
